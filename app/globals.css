@@ -1,0 +1,143 @@
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Inter:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --paper: #f6f4ee;
+  --ink: #21241f;
+  --ink-heading: #181a17;
+  --ink-muted: #6c7068;
+  --ink-subtle: #7a7d75;
+  --ink-faint: #858980;
+  --ink-nav: #60645b;
+
+  --surface-card: #fbfaf7;
+  --surface-subtle: #f9f8f4;
+  --surface-inner: #ffffff;
+  --surface-chip: #f0efe9;
+
+  --border: #d9d7cd;
+  --border-subtle: #e2e0d8;
+  --border-header: #deddd4;
+  --border-input: #cfcfc5;
+  --border-dashed: #c9c8be;
+
+  /* Brand olive / sage */
+  --olive-primary: #5f6d27;
+  --olive-primary-hover: #4e5b1f;
+  --olive-eyebrow: #6d7555;
+  --olive-text: #4f5829;
+  --olive-subtle-text: #5b6338;
+  --olive-dark-text: #3f4a17;
+
+  --banner-sage-bg: #dfe4c9;
+  --banner-sage-border: #bec6a2;
+  --banner-sage-text: #58604d;
+  --banner-sage-dark-text: #46511f;
+
+  --badge-olive-bg: #eef0df;
+  --badge-olive-border: #c3cc8f;
+  --badge-olive-text: #465418;
+
+  --selection-bg: #dfe4c9;
+  --selection-color: #21241f;
+  --focus-ring: rgba(95, 109, 39, 0.55);
+
+  --warning-bg: #f7ecd5;
+  --warning-border: #c5a25f;
+  --warning-text: #7a5a1a;
+  --warning-dark-text: #5c451c;
+
+  --error-bg: #f2e4dc;
+  --error-border: #e0b9ad;
+  --error-text: #844c3b;
+
+  --success-bg: #e2efe6;
+  --success-border: #bcd8c4;
+  --success-text: #2f6b50;
+
+  --btn-dark-bg: #20231f;
+  --btn-dark-hover: #000000;
+  --btn-dark-text: #ffffff;
+
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-serif: 'Fraunces', Georgia, "Times New Roman", serif;
+}
+
+.dark {
+  --paper: #141613;
+  --ink: #edebe4;
+  --ink-heading: #f4f3ec;
+  --ink-muted: #9ea396;
+  --ink-subtle: #898f82;
+  --ink-faint: #73786e;
+  --ink-nav: #a8ada2;
+
+  --surface-card: #1c201b;
+  --surface-subtle: #181c17;
+  --surface-inner: #222620;
+  --surface-chip: #262b23;
+
+  --border: #2e342a;
+  --border-subtle: #272d23;
+  --border-header: #262b22;
+  --border-input: #373e32;
+  --border-dashed: #3a4235;
+
+  /* Brand olive / sage - tuned for dark contrast */
+  --olive-primary: #768930;
+  --olive-primary-hover: #889d38;
+  --olive-eyebrow: #9fa87f;
+  --olive-text: #c2d18f;
+  --olive-subtle-text: #adb887;
+  --olive-dark-text: #d8e6ad;
+
+  --banner-sage-bg: #232c1c;
+  --banner-sage-border: #3b492d;
+  --banner-sage-text: #cdd6be;
+  --banner-sage-dark-text: #d6e2be;
+
+  --badge-olive-bg: #26331e;
+  --badge-olive-border: #445934;
+  --badge-olive-text: #b6cc87;
+
+  --selection-bg: #354228;
+  --selection-color: #f4f3ec;
+  --focus-ring: rgba(136, 157, 56, 0.65);
+
+  --warning-bg: #2a2415;
+  --warning-border: #5a451e;
+  --warning-text: #e2c17b;
+  --warning-dark-text: #ebd094;
+
+  --error-bg: #2f1917;
+  --error-border: #612a25;
+  --error-text: #e89b94;
+
+  --success-bg: #18281e;
+  --success-border: #29533a;
+  --success-text: #82d4a6;
+
+  --btn-dark-bg: #282e25;
+  --btn-dark-hover: #333a2f;
+  --btn-dark-text: #edebe4;
+}
+
+* { box-sizing: border-box; }
+html { background: var(--paper); -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  line-height: 1.5;
+}
+a { color: inherit; text-decoration: none; }
+button, input, textarea { font: inherit; }
+button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: 4px; }
+::selection { background: var(--selection-bg); color: var(--selection-color); }
+.display-serif { font-family: var(--font-serif); font-weight: 500; font-optical-sizing: auto; letter-spacing: -0.02em; line-height: 1.03; }
