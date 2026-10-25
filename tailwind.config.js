@@ -22,6 +22,7 @@ module.exports = {
         fontFamily: {
           sans: ['var(--font-sans)', 'ui-sans-serif', 'system-ui', 'sans-serif'],
           serif: ['var(--font-serif)', 'Georgia', 'serif'],
+          instrument: ['var(--font-instrument)', '"Instrument Serif"', 'Georgia', 'serif'],
         },
         colors: {
           paper: 'var(--paper)',

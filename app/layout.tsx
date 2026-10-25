@@ -3,8 +3,8 @@ import "./globals.css";
 import { ThemeProvider } from "@/components/theme-provider";
 
 export const metadata: Metadata = {
-  title: "Speakomo — Research-to-speech practice",
-  description: "A calm workspace for turning academic research into clear spoken reasoning.",
+  title: "Speakomo",
+  description: "A calm workspace for turning your speech research into clear spoken reasoning.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

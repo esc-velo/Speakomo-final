@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Logo } from "@/components/ui/logo";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { Footer } from "@/components/footer";
 
 export default function Home() {
   return (
@@ -89,6 +90,7 @@ export default function Home() {
           </Link>
         </div>
       </section>
+      <Footer />
     </main>
   );
 }
