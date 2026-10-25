@@ -8,7 +8,7 @@ export type StoredSpeechMeta = {
   stoppedReason: "early_stop" | "auto_stop" | "interrupted" | null;
   audioMime: string | null;
   audioBytes: number | null;
-  uploadStatus: "local_only" | "upload_not_connected" | "failed";
+  uploadStatus: "local_only" | "upload_not_connected" | "uploading" | "uploaded" | "failed";
   serverSyncStatus: "not_connected" | "synced" | "failed";
 };
 

@@ -1,12 +1,19 @@
 export type StoredResearchImage = { id: string; name: string; type: string; size: number; blob: Blob };
 export type ResearchDraft = { id: string; topic: string; text: string; images: StoredResearchImage[]; savedAt: string };
 const DB_NAME = "speakomo-recovery";
+const DB_VERSION = 2;
 const STORE_NAME = "research-drafts";
 
 function openDatabase(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 1);
-    request.onupgradeneeded = () => request.result.createObjectStore(STORE_NAME, { keyPath: "id" });
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onupgradeneeded = () => {
+      const database = request.result;
+      if (!database.objectStoreNames.contains(STORE_NAME)) database.createObjectStore(STORE_NAME, { keyPath: "id" });
+      // Keep in sync with audio-store.ts so either module can perform the upgrade
+      if (!database.objectStoreNames.contains("speech-meta")) database.createObjectStore("speech-meta", { keyPath: "sessionId" });
+      if (!database.objectStoreNames.contains("speech-blob")) database.createObjectStore("speech-blob", { keyPath: "sessionId" });
+    };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
   });

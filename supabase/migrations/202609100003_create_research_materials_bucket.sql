@@ -4,7 +4,6 @@ VALUES ('research-materials', 'research-materials', false)
 ON CONFLICT (id) DO NOTHING;
 
 -- Enable RLS for the bucket objects
-ALTER TABLE storage.objects ENABLE ROW LEVEL SECURITY;
 
 -- Users can upload to their own research session folder
 CREATE POLICY "Users can upload own research materials"

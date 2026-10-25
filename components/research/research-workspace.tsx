@@ -92,7 +92,9 @@ export default function ResearchWorkspace() {
       if (!sessionResponse.ok) throw new Error(sessionData.error ?? "The server could not create a session.");
       const saveResponse = await fetch(`/api/sessions/${sessionData.session.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ researchText: text }) });
       if (!saveResponse.ok) { const data = await saveResponse.json(); throw new Error(data.error ?? "The research could not be saved."); }
-      await deleteResearchDraft(DRAFT_ID);
+      // Draft cleanup must not throw into the server-error catch block —
+      // the server session is already persisted and its ID must be preserved.
+      try { await deleteResearchDraft(DRAFT_ID); } catch { /* best-effort */ }
       setSavedSessionId(sessionData.session.id);
       setSaveState("Saved to your session");
       setMessage("");
