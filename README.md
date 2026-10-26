@@ -64,18 +64,6 @@ Login → Dashboard → Topic → Research → Speak → Analyze → Results
 -   Session history
 -   Cross-session progress trends
 
-### Explicitly Deferred
-
--   Native mobile application
--   Recruiter features
--   Automated job applications
--   Hiring decisions
--   Social network
--   Leaderboards
--   Complex gamification
--   Large-scale analytics
--   Advanced RAG infrastructure
-
 ## 3. Locked Technical Stack
 
 ### Web
