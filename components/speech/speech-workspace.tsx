@@ -8,6 +8,9 @@ import { SIX_STAGES, TOTAL_DURATION_SEC, formatMmSs, stageForElapsed } from "@/l
 import { deleteSpeech, loadSpeechBlob, loadSpeechMeta, saveSpeechBlob, saveSpeechMeta, type StoredSpeechMeta } from "@/lib/speech/audio-store";
 import { StatusBadge, type StatusKind } from "@/components/ui/status-badge";
 
+type CuePoint = { stageKey: string; phrase: string; evidenceIds: string[] };
+type CueSet = { cues: CuePoint[]; model: string; promptVersion: string; inputHash: string; generatedAt: string };
+
 type Props = { sessionId: string; cueMode: "research_grounded" | "generic" };
 
 const MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024; // 25 MiB
@@ -123,6 +126,59 @@ export default function SpeechWorkspace({ sessionId, cueMode }: Props) {
   const idempotencyKeyRef = useRef<string>("");
 
   const cueModeLabel = cueMode === "generic" ? "Generic prompts · Not research-grounded" : "Research-grounded cues";
+
+  // Research cue state
+  const [researchCues, setResearchCues] = useState<CuePoint[] | null>(null);
+  const [cueLoadError, setCueLoadError] = useState<string | null>(null);
+  const [cueLoading, setCueLoading] = useState(cueMode === "research_grounded");
+
+  // Fetch research cues on mount for research_grounded mode
+  useEffect(() => {
+    if (cueMode !== "research_grounded") return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/sessions/${sessionId}/research/cues`);
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          if (!cancelled) setCueLoadError(err.error || "Failed to load research cues.");
+          return;
+        }
+        const data = await res.json();
+        if (!cancelled) {
+          const cues = data.effectiveCues || data.cueSet?.cues;
+          if (data.cueStatus === "generated" && Array.isArray(cues) && cues.length === 12) {
+            setResearchCues(cues);
+          } else {
+            const reason = data.cueError
+              ? data.cueError
+              : data.cueStatus === "failed"
+                ? "Cue generation failed. Return to Research and retry."
+                : data.cueStatus === "stale"
+                  ? "Cues are outdated. Regenerate from the Research page."
+                  : data.cueStatus === "generating"
+                    ? "Cue generation is still in progress. Please wait."
+                    : "No cues generated yet. Generate cues from the Research page first.";
+            setCueLoadError(reason);
+          }
+        }
+      } catch (err) {
+        if (!cancelled) {
+          const msg = err instanceof Error ? err.message : "Could not load research cues.";
+          setCueLoadError(msg);
+        }
+      } finally {
+        if (!cancelled) setCueLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [cueMode, sessionId]);
+
+  // Helper: get 2 research cues for the given stage key
+  const getCuesForStage = useCallback((stageKey: string): CuePoint[] => {
+    if (!researchCues) return [];
+    return researchCues.filter((c) => c.stageKey === stageKey);
+  }, [researchCues]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -528,6 +584,33 @@ export default function SpeechWorkspace({ sessionId, cueMode }: Props) {
         </p>
       )}
 
+      {/* Research cue loading / error state */}
+      {cueMode === "research_grounded" && cueLoading && (
+        <div className="mt-6 flex items-center gap-3 rounded-2xl border border-[var(--olive-primary)]/40 bg-[var(--badge-olive-bg)] p-4 text-sm text-[var(--olive-dark-text)]" aria-live="polite">
+          <Loader2 className="h-5 w-5 animate-spin text-[var(--olive-primary)] shrink-0" />
+          <p className="font-semibold">Loading research cues…</p>
+        </div>
+      )}
+      {cueMode === "research_grounded" && cueLoadError && (
+        <div className="mt-6 rounded-2xl border border-[var(--error-border)] bg-[var(--error-bg)] p-5 text-sm text-[var(--error-text)]" role="alert">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="h-5 w-5 shrink-0 mt-0.5" />
+            <div className="flex-1">
+              <p className="font-semibold">Research cues unavailable</p>
+              <p className="mt-1 text-xs leading-5">{cueLoadError}</p>
+              <div className="mt-4 flex flex-wrap gap-2.5">
+                <Link href={`/dashboard/session/${sessionId}/research`} className="rounded-full bg-[var(--olive-primary)] px-4 py-2 text-xs font-semibold text-white transition hover:bg-[var(--olive-primary-hover)]">
+                  Return to Research
+                </Link>
+                <Link href={`/dashboard/session/${sessionId}/speak?cueMode=generic`} className="rounded-full border border-[var(--border)] bg-[var(--surface-inner)] px-4 py-2 text-xs font-semibold text-[var(--ink)] hover:bg-[var(--surface-chip)]">
+                  Use generic prompts instead
+                </Link>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Confirmation banner before replacing an existing recording */}
       {replaceConfirmFile && (
         <div className="mt-6 rounded-2xl border border-[var(--warning-border)] bg-[var(--warning-bg)] p-5 text-sm text-[var(--warning-text)]" role="alert">
@@ -622,7 +705,17 @@ export default function SpeechWorkspace({ sessionId, cueMode }: Props) {
             </span>
           </div>
           <p className="display-serif mt-4 text-3xl leading-tight text-[var(--ink-heading)]">{activeStage.stage.label}</p>
-          <p className="mt-3 text-sm leading-6 text-[var(--ink)]">{activeStage.stage.genericPrompt}</p>
+          {cueMode === "research_grounded" && researchCues ? (
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {getCuesForStage(activeStage.stage.key).map((cue, ci) => (
+                <div key={ci} className="rounded-lg border border-[var(--badge-olive-border)] bg-[var(--badge-olive-bg)] px-3.5 py-2.5">
+                  <p className="text-sm font-semibold text-[var(--olive-dark-text)]">{cue.phrase}</p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-3 text-sm leading-6 text-[var(--ink)]">{activeStage.stage.genericPrompt}</p>
+          )}
           <div className="mt-5 h-2 overflow-hidden rounded-full bg-[var(--surface-chip)]">
             <div className="h-full rounded-full bg-[var(--olive-primary)] transition-all" style={{ width: `${Math.min(100, (elapsedSec / TOTAL_DURATION_SEC) * 100)}%` }} />
           </div>
@@ -651,7 +744,7 @@ export default function SpeechWorkspace({ sessionId, cueMode }: Props) {
               <button
                 type="button"
                 onClick={startRecording}
-                disabled={isUploading}
+                disabled={isUploading || (cueMode === "research_grounded" && (!researchCues || cueLoading))}
                 className="rounded-full bg-[var(--olive-primary)] px-6 py-3 text-sm font-semibold text-white transition hover:bg-[var(--olive-primary-hover)] disabled:opacity-50"
               >
                 Start speaking · 5:00

@@ -9,7 +9,7 @@
         "build": "next build",
         "start": "next start",
         "lint": "tsc --noEmit",
-        "test": "node --experimental-strip-types --test tests/integration/research-pipeline.test.mjs"
+        "test": "node --experimental-strip-types --test tests/integration/research-pipeline.test.mjs tests/integration/cue-generation.test.mjs"
     },
     "dependencies": {
         "@hookform/resolvers": "5.1.1",

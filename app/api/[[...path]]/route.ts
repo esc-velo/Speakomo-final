@@ -7,6 +7,7 @@ import {
   uploadResearchImage,
   executeSessionExtraction,
 } from "@/lib/research/pipeline";
+import { generateCuesForSession, getSessionCues, saveCueEdit } from "@/lib/research/cue-generator";
 import { getAsrAdapter, computeSpeechMetrics } from "@/lib/speech/asr-adapter";
 import { Buffer } from "node:buffer";
 
@@ -128,7 +129,7 @@ async function handleRoute(request: Request, { params }: RouteContext) {
       return json({ session: data, requestId: clientRequestId, replayed: false }, 201);
     }
 
-    if (path[0] === "sessions" && path[1] && request.method === "PATCH") {
+    if (path[0] === "sessions" && path[1] && !path[2] && request.method === "PATCH") {
       const { supabase, user, response } = await getAuth();
       if (response || !user) return response;
       const body = await request.json().catch(() => ({}));
@@ -182,7 +183,18 @@ async function handleRoute(request: Request, { params }: RouteContext) {
       if (!data) {
         return json({ code: "SESSION_NOT_FOUND", error: "Session not found or not owned by this account." }, 404);
       }
-      return json(data);
+
+      // Enrich with cue generation data
+      const cueData = await getSessionCues(supabase, sessionId, user.id);
+      return json({
+        ...data,
+        cueStatus: cueData.cueStatus,
+        cueError: cueData.cueError,
+        cueSet: cueData.cueSet,
+        effectiveCues: cueData.effectiveCues,
+        editedCues: cueData.editedCues,
+        hasEdits: cueData.hasEdits,
+      });
     }
 
     // POST /sessions/:id/research/upload — Upload research image material to Supabase Storage & evidence table
@@ -252,6 +264,72 @@ async function handleRoute(request: Request, { params }: RouteContext) {
       }
     }
 
+    // POST /sessions/:id/research/cues — Generate, retry, or force-regenerate speaking cues
+    if (
+      path[0] === "sessions" &&
+      path[1] &&
+      path[2] === "research" &&
+      path[3] === "cues" &&
+      !path[4] &&
+      request.method === "POST"
+    ) {
+      const { supabase, user, response } = await getAuth();
+      if (response || !user) return response;
+      const sessionId = path[1];
+      const body = await request.json().catch(() => ({}));
+      const force = body?.force === true;
+      const resetEdits = body?.resetEdits === true;
+
+      const result = await generateCuesForSession(supabase, sessionId, user.id, { force, resetEdits });
+      if (!result.success) {
+        return json({ code: "CUE_GENERATION_FAILED", error: result.error, repairAttempts: result.repairAttempts }, 422);
+      }
+      return json({
+        success: true,
+        cueSet: result.cueSet,
+        effectiveCues: result.effectiveCues,
+        editedCues: result.editedCues,
+        hasEdits: result.hasEdits,
+        repairAttempts: result.repairAttempts,
+      });
+    }
+
+    // PATCH /sessions/:id/research/cues — Save inline edit to a specific cue point
+    if (
+      path[0] === "sessions" &&
+      path[1] &&
+      path[2] === "research" &&
+      path[3] === "cues" &&
+      !path[4] &&
+      request.method === "PATCH"
+    ) {
+      const { supabase, user, response } = await getAuth();
+      if (response || !user) return response;
+      const sessionId = path[1];
+      const body = await request.json().catch(() => ({}));
+      const result = await saveCueEdit(supabase, sessionId, user.id, body);
+      if (!result.success) {
+        return json({ code: "CUE_EDIT_FAILED", error: result.error }, 400);
+      }
+      return json(result);
+    }
+
+    // GET /sessions/:id/research/cues — Retrieve current cue set without generating
+    if (
+      path[0] === "sessions" &&
+      path[1] &&
+      path[2] === "research" &&
+      path[3] === "cues" &&
+      !path[4] &&
+      request.method === "GET"
+    ) {
+      const { supabase, user, response } = await getAuth();
+      if (response || !user) return response;
+      const sessionId = path[1];
+      const cueData = await getSessionCues(supabase, sessionId, user.id);
+      return json(cueData);
+    }
+
     if (path[0] === "sessions" && path[1] && request.method === "DELETE") {
       const { supabase, user, response } = await getAuth();
       if (response || !user) return response;
@@ -287,6 +365,22 @@ async function handleRoute(request: Request, { params }: RouteContext) {
 
       const { data: owning, error: owningError } = await supabase.from("sessions").select("id").eq("id", path[1]).eq("user_id", user.id).maybeSingle();
       if (owningError || !owning) return json({ code: "SESSION_NOT_FOUND", error: "Session not found or not owned by this account." }, 404);
+
+      // Server-side cue validation for research_grounded mode
+      if (cueMode === "research_grounded") {
+        const cueData = await getSessionCues(supabase, path[1], user.id);
+        const cues = cueData.effectiveCues || cueData.cueSet?.cues;
+        if (!cues || cues.length !== 12 || cueData.cueStatus !== "generated") {
+          const reason = cueData.cueStatus === "failed"
+            ? "Cue generation failed. Return to the Research page and retry."
+            : cueData.cueStatus === "stale"
+              ? "Your research has changed since cues were generated. Regenerate cues first."
+              : cueData.cueStatus === "generating"
+                ? "Cue generation is still in progress. Please wait."
+                : "No research cues have been generated yet. Generate cues from the Research page first.";
+          return json({ code: "CUES_NOT_READY", error: reason, cueStatus: cueData.cueStatus }, 422);
+        }
+      }
 
       // Idempotency: return the original speech row if this key was used before by this user.
       const { data: existing } = await supabase.from("speech_sessions").select("id, cue_mode, started_at, ended_at, actual_duration_ms, stopped_reason, upload_status, server_sync_status").eq("user_id", user.id).eq("idempotency_key", rawKey).maybeSingle();
@@ -587,6 +681,12 @@ async function handleRoute(request: Request, { params }: RouteContext) {
         return json({ code: "SPEECH_RESPONSE_FETCH_FAILED", error: "Could not load speech response." }, 500);
       }
 
+      const { data: rs } = await supabase
+        .from("research_sessions")
+        .select("topic")
+        .eq("session_id", sessionId)
+        .maybeSingle();
+
       let signedAudioUrl: string | null = null;
       if (speechResponse?.audio_path) {
         const adminClient = createAdminClient();
@@ -600,6 +700,7 @@ async function handleRoute(request: Request, { params }: RouteContext) {
       return json({
         speechResponse: speechResponse ?? null,
         signedAudioUrl,
+        sessionTitle: rs?.topic || null,
       });
     }
 

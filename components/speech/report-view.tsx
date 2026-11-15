@@ -41,6 +41,7 @@ type SpeechResponseRecord = {
 export default function ReportView({ sessionId }: Props) {
   const [meta, setMeta] = useState<StoredSpeechMeta | null>(null);
   const [speechResponse, setSpeechResponse] = useState<SpeechResponseRecord | null>(null);
+  const [sessionTitle, setSessionTitle] = useState<string | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -59,6 +60,9 @@ export default function ReportView({ sessionId }: Props) {
       const res = await fetch(`/api/sessions/${sessionId}/speech/response`);
       if (res.ok) {
         const data = await res.json();
+        if (data.sessionTitle) {
+          setSessionTitle(data.sessionTitle);
+        }
         if (data.speechResponse) {
           setSpeechResponse(data.speechResponse);
           if (data.signedAudioUrl && !audioUrlRef.current) {
@@ -141,7 +145,17 @@ export default function ReportView({ sessionId }: Props) {
           setAudioUrl(objectUrl);
         }
 
-        const serverResponse = await fetchSpeechResponse();
+        const [serverResponse] = await Promise.all([
+          fetchSpeechResponse(),
+          fetch(`/api/sessions/${sessionId}/research`)
+            .then(async (r) => {
+              if (r.ok) {
+                const rd = await r.json();
+                if (rd?.topic && isMounted) setSessionTitle(rd.topic);
+              }
+            })
+            .catch(() => {}),
+        ]);
 
         // If no server transcript yet, but recording exists and upload was marked uploading or completed
         if (!serverResponse && blob && (metaResult?.uploadStatus === "uploading" || metaResult?.uploadStatus === "local_only")) {
@@ -257,9 +271,6 @@ export default function ReportView({ sessionId }: Props) {
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <StatusBadge kind={speechResponse ? "completed" : isTranscribing ? "processing" : "idle"} />
-          <StatusBadge kind={uploadKind} prefix="Storage" />
-          <StatusBadge kind={serverSyncKind} prefix="Sync" />
         </div>
       </div>
 
@@ -387,7 +398,6 @@ export default function ReportView({ sessionId }: Props) {
                   <Headphones className="h-4 w-4 text-[var(--olive-primary)]" />
                   <p className="text-xs font-bold uppercase tracking-[0.2em] text-[var(--olive-eyebrow)]">Audio playback</p>
                 </div>
-                <StatusBadge kind={audioUrl ? "local_only" : "unavailable"} />
               </div>
 
               {audioUrl ? (
@@ -412,12 +422,10 @@ export default function ReportView({ sessionId }: Props) {
                   </dd>
                 </div>
                 <div>
-                  <dt className="text-xs uppercase tracking-wider text-[var(--ink-subtle)]">Storage Bucket</dt>
-                  <dd className="mt-1 font-medium text-[var(--ink-heading)]">speech-recordings</dd>
-                </div>
-                <div>
-                  <dt className="text-xs uppercase tracking-wider text-[var(--ink-subtle)]">Session ID</dt>
-                  <dd className="mt-1 font-mono text-xs text-[var(--ink-muted)] truncate">{sessionId}</dd>
+                  <dt className="text-xs uppercase tracking-wider text-[var(--ink-subtle)]">Session Title</dt>
+                  <dd className="mt-1 font-medium text-[var(--ink-heading)] truncate" title={sessionTitle || "Practice session"}>
+                    {sessionTitle || "Practice session"}
+                  </dd>
                 </div>
               </dl>
             </div>
@@ -426,9 +434,9 @@ export default function ReportView({ sessionId }: Props) {
             <div className="rounded-2xl border border-[var(--banner-sage-border)] bg-[var(--banner-sage-bg)] p-6 text-[var(--banner-sage-text)]">
               <div className="flex items-center justify-between border-b border-[var(--banner-sage-border)] pb-3">
                 <p className="text-xs font-bold uppercase tracking-[0.22em] text-[var(--olive-primary)]">Filler word breakdown</p>
-                <span className="rounded-full bg-white/60 px-2 py-0.5 text-xs font-semibold text-[var(--olive-dark-text)]">
-                  {fillerCount} total
-                </span>
+                  <span className="rounded-full bg-[var(--olive-primary)]/15 px-2 py-0.5 text-xs font-semibold text-[var(--olive-primary)] border border-[var(--olive-primary)]/25">
+                    {fillerCount} total
+                  </span>
               </div>
 
               <div className="mt-4 grid grid-cols-3 gap-2">
@@ -451,7 +459,7 @@ export default function ReportView({ sessionId }: Props) {
               </div>
 
               {pacingAssessment && (
-                <div className="mt-5 rounded-xl border border-[var(--banner-sage-border)] bg-white/50 p-3.5 text-xs leading-5">
+                <div className="mt-5 rounded-xl border border-[var(--olive-dark-border)] bg-[var(--banner-sage-bg)] p-3.5 text-xs leading-5">
                   <p className="font-semibold text-[var(--banner-sage-dark-text)]">{pacingAssessment.label}</p>
                   <p className="mt-0.5 text-[var(--ink-muted)]">{pacingAssessment.description}</p>
                 </div>
