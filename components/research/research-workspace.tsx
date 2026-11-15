@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { deleteResearchDraft, loadResearchDraft, saveResearchDraft, type StoredResearchImage } from "@/lib/research/draft-store";
 import { validateResearchInput } from "@/lib/research/adapter";
 
@@ -87,15 +88,86 @@ export default function ResearchWorkspace() {
     if (!validation.ok) { setMessage(validation.message); return; }
     setBusy(true); setMessage("");
     try {
-      const sessionResponse = await fetch("/api/sessions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ requestId: crypto.randomUUID() }) });
+      // 1. Create or ensure session
+      const sessionResponse = await fetch("/api/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ requestId: crypto.randomUUID() })
+      });
       const sessionData = await sessionResponse.json();
       if (!sessionResponse.ok) throw new Error(sessionData.error ?? "The server could not create a session.");
-      const saveResponse = await fetch(`/api/sessions/${sessionData.session.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ researchText: text }) });
-      if (!saveResponse.ok) { const data = await saveResponse.json(); throw new Error(data.error ?? "The research could not be saved."); }
-      // Draft cleanup must not throw into the server-error catch block —
-      // the server session is already persisted and its ID must be preserved.
+      const sessionId = sessionData.session.id;
+
+      // 2. Persist custom academic topic and original research notes
+      const saveResponse = await fetch(`/api/sessions/${sessionId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          topic: topic.trim(),
+          researchText: text,
+        })
+      });
+      if (!saveResponse.ok) {
+        const data = await saveResponse.json();
+        throw new Error(data.error ?? "The research notes could not be saved.");
+      }
+
+      // 3. Upload all original image blobs to private Supabase Storage
+      const failedUploads: string[] = [];
+      if (images.length > 0) {
+        for (const image of images) {
+          try {
+            const formData = new FormData();
+            formData.append("file", image.blob, image.name);
+            formData.append("title", image.name);
+            const uploadRes = await fetch(`/api/sessions/${sessionId}/research/upload`, {
+              method: "POST",
+              body: formData,
+            });
+            if (!uploadRes.ok) {
+              const errData = await uploadRes.json().catch(() => ({}));
+              failedUploads.push(`${image.name} (${errData.error || "upload failed"})`);
+            }
+          } catch {
+            failedUploads.push(`${image.name} (network error)`);
+          }
+        }
+      }
+
+      // 4. Handle partial failures safely:
+      // Never delete the local draft until the server confirms successful persistence of ALL original material!
+      if (failedUploads.length > 0) {
+        setSavedSessionId(sessionId);
+        setSaveState("Saved with partial image upload errors");
+        setMessage(
+          `Research notes saved, but ${failedUploads.length} image(s) failed to upload: ${failedUploads.join("; ")}. Your local draft is preserved so you can retry without losing material.`
+        );
+        return;
+      }
+
+      // 5. Trigger OCR text extraction on the persisted session materials
+      let extractionSuccess = false;
+      try {
+        const extractRes = await fetch(`/api/sessions/${sessionId}/research/process`, {
+          method: "POST",
+        });
+        if (extractRes.ok) {
+          const extractData = await extractRes.json();
+          if (extractData.status === "extracted") {
+            extractionSuccess = true;
+          }
+        }
+      } catch (err) {
+        console.warn("Background extraction warning:", err);
+      }
+
+      // 6. Persistence of all original material confirmed! Safe to clear IndexedDB draft.
       try { await deleteResearchDraft(DRAFT_ID); } catch { /* best-effort */ }
-      setSavedSessionId(sessionData.session.id);
+
+      setSavedSessionId(sessionId);
+      if (extractionSuccess) {
+        setAiAvailable(true);
+      }
       setSaveState("Saved to your session");
       setMessage("");
     } catch (error) {
@@ -120,10 +192,25 @@ export default function ResearchWorkspace() {
     if (!validation.ok) { setMessage(validation.message); return; }
     setBusy(true); setMessage("");
     try {
-      const response = await fetch("/api/research/process", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ text, images: images.map(({ name, type, size }) => ({ name, type, size })) }) });
+      const payload: Record<string, unknown> = {
+        text,
+        images: images.map(({ name, type, size }) => ({ name, type, size })),
+      };
+      if (savedSessionId) {
+        payload.sessionId = savedSessionId;
+      }
+      const response = await fetch("/api/research/process", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
       const data = await response.json();
-      if (response.ok && data?.generated === true) setAiAvailable(true);
-      setMessage(data.message ?? data.error ?? "Research processing is unavailable.");
+      if (response.ok && (data?.generated === true || data?.status === "extracted")) {
+        setAiAvailable(true);
+        setMessage("Research material is validated and ready for cue generation.");
+      } else {
+        setMessage(data?.message ?? data?.error ?? "Research processing is unavailable.");
+      }
     } catch { setMessage("Research processing could not be reached. Your original material is preserved."); }
     finally { setBusy(false); }
   }
@@ -191,11 +278,17 @@ export default function ResearchWorkspace() {
           {aiAvailable ? (
             <>
               <p className="mt-3 text-sm leading-6 text-[var(--ink-muted)]">Research-grounded cues are ready for this session.</p>
-              <button type="button" onClick={() => continueToSpeak("research_grounded")} className="mt-5 rounded-full bg-[var(--olive-primary)] px-6 py-3 text-sm font-semibold text-white transition hover:bg-[var(--olive-primary-hover)]">Continue to speaking session <span aria-hidden="true">↗</span></button>
+              <div className="mt-5 flex flex-wrap gap-3">
+                <button type="button" onClick={() => continueToSpeak("research_grounded")} className="rounded-full bg-[var(--olive-primary)] px-6 py-3 text-sm font-semibold text-white transition hover:bg-[var(--olive-primary-hover)]">Continue to speaking session <span aria-hidden="true">↗</span></button>
+                <Link href={`/dashboard/session/${savedSessionId}/research`} className="rounded-full border border-[var(--border)] px-5 py-3 text-sm font-semibold text-[var(--olive-text)] transition hover:bg-[var(--surface-inner)]">Review research material ↗</Link>
+              </div>
             </>
           ) : (
             <>
-              <p className="mt-3 text-sm leading-6 text-[var(--ink-muted)]">AI research extraction is not connected, so your cues will be generic and clearly labelled <span className="font-semibold text-[var(--ink)]">Not research-grounded</span> throughout the session and report.</p>
+              <p className="mt-3 text-sm leading-6 text-[var(--ink-muted)]">Research extraction is ready. You can review your saved material or proceed to a speaking session.</p>
+              <div className="mt-4 flex flex-wrap gap-3">
+                <Link href={`/dashboard/session/${savedSessionId}/research`} className="rounded-full border border-[var(--border)] px-5 py-2.5 text-sm font-semibold text-[var(--olive-text)] transition hover:bg-[var(--surface-inner)]">Review saved research ↗</Link>
+              </div>
               <label className="mt-4 flex items-start gap-3 text-sm text-[var(--ink)]">
                 <input type="checkbox" checked={ack} onChange={(event) => setAck(event.target.checked)} className="mt-1 accent-[var(--olive-primary)]" />
                 <span>I understand that these prompts are not research-grounded.</span>

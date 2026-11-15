@@ -7,7 +7,7 @@ const nextConfig = {
     ],
   },
   // Renamed from experimental.serverComponentsExternalPackages in Next 15
-  serverExternalPackages: ['mongodb'],
+  serverExternalPackages: ['mongodb', 'tesseract.js'],
   webpack(config, { dev }) {
     if (dev) {
       // Reduce CPU/memory from file watching

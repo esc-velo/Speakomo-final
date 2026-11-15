@@ -1,6 +1,12 @@
 import { NextResponse } from "next/server";
 import { createClient, createAdminClient } from "@/supabase/server";
-import { getProviderDisabledAdapter, validateResearchInput } from "@/lib/research/adapter";
+import { getResearchAdapter, getProviderDisabledAdapter, validateResearchInput } from "@/lib/research/adapter";
+import {
+  ensureResearchSession,
+  getResearchSessionData,
+  uploadResearchImage,
+  executeSessionExtraction,
+} from "@/lib/research/pipeline";
 import { getAsrAdapter, computeSpeechMetrics } from "@/lib/speech/asr-adapter";
 import { Buffer } from "node:buffer";
 
@@ -131,6 +137,12 @@ async function handleRoute(request: Request, { params }: RouteContext) {
         update.topic_id = body.topicId;
         update.status = "topic_selected";
       }
+      if (typeof body.topic === "string" && body.topic.trim().length > 0) {
+        update.status = "topic_selected";
+      }
+      if (typeof body.researchText === "string") {
+        update.status = "research_saved";
+      }
       const { data: session, error: sessionError } = await supabase
         .from("sessions")
         .update({ ...update, updated_at: new Date().toISOString() })
@@ -139,13 +151,105 @@ async function handleRoute(request: Request, { params }: RouteContext) {
         .select("id, status, topic_id, created_at, updated_at")
         .single();
       if (sessionError || !session) return json({ code: "SESSION_NOT_FOUND", error: "Session not found or not owned by this account." }, 404);
-      if (typeof body.researchText === "string") {
-        const validation = validateResearchInput(body.researchText, []);
-        if (!validation.ok) return json({ code: validation.code, error: validation.message }, 400);
-        const { error: researchError } = await supabase.from("research_sessions").upsert({ session_id: path[1], notes: body.researchText, sources: [] }, { onConflict: "session_id" });
-        if (researchError) return json({ code: "RESEARCH_SAVE_FAILED", error: "The session saved, but research notes could not be saved." }, 500);
+
+      if (typeof body.researchText === "string" || typeof body.topic === "string") {
+        const textToValidate = typeof body.researchText === "string" ? body.researchText : "";
+        const validation = validateResearchInput(textToValidate, []);
+        if (textToValidate && !validation.ok && validation.code === "RESEARCH_TOO_LONG") {
+          return json({ code: validation.code, error: validation.message }, 400);
+        }
+
+        try {
+          await ensureResearchSession(supabase, path[1], {
+            topic: typeof body.topic === "string" ? body.topic : undefined,
+            notes: typeof body.researchText === "string" ? body.researchText : undefined,
+          });
+        } catch (researchError) {
+          console.error("Research persistence error:", researchError);
+          return json({ code: "RESEARCH_SAVE_FAILED", error: "The session saved, but research notes could not be saved." }, 500);
+        }
       }
       return json({ session });
+    }
+
+    // GET /sessions/:id/research — Retrieve complete research data with signed URLs for image previews
+    if (path[0] === "sessions" && path[1] && path[2] === "research" && !path[3] && request.method === "GET") {
+      const { supabase, user, response } = await getAuth();
+      if (response || !user) return response;
+      const sessionId = path[1];
+
+      const data = await getResearchSessionData(supabase, sessionId, user.id);
+      if (!data) {
+        return json({ code: "SESSION_NOT_FOUND", error: "Session not found or not owned by this account." }, 404);
+      }
+      return json(data);
+    }
+
+    // POST /sessions/:id/research/upload — Upload research image material to Supabase Storage & evidence table
+    if (path[0] === "sessions" && path[1] && path[2] === "research" && path[3] === "upload" && request.method === "POST") {
+      const { supabase, user, response } = await getAuth();
+      if (response || !user) return response;
+      const sessionId = path[1];
+
+      const contentLength = Number(request.headers.get("content-length"));
+      if (Number.isFinite(contentLength) && contentLength > 25 * 1024 * 1024) {
+        return json({ code: "FILE_TOO_LARGE", error: "Uploaded material exceeds the 25 MB limit." }, 400);
+      }
+
+      const formData = await request.formData().catch(() => null);
+      if (!formData) {
+        return json({ code: "INVALID_FORM_DATA", error: "Invalid form data submission." }, 400);
+      }
+
+      const fileEntries = [
+        ...formData.getAll("files"),
+        ...formData.getAll("file"),
+      ].filter((f): f is File => f instanceof File || f instanceof Blob);
+
+      if (fileEntries.length === 0) {
+        return json({ code: "NO_FILE_PROVIDED", error: "At least one image file is required." }, 400);
+      }
+
+      const uploaded = [];
+      const failed = [];
+
+      for (const file of fileEntries) {
+        const fileName = (file as File).name || "material.png";
+        const mimeType = file.type || "image/png";
+        const res = await uploadResearchImage(supabase, sessionId, user.id, file, fileName, mimeType);
+        if (res.success && res.evidence) {
+          uploaded.push(res.evidence);
+        } else {
+          failed.push({ fileName, error: res.error || "Upload failed" });
+        }
+      }
+
+      return json({
+        success: failed.length === 0,
+        uploaded,
+        failed,
+      }, failed.length === fileEntries.length ? 400 : 200);
+    }
+
+    // POST /sessions/:id/research/process or extract — Independently retryable OCR extraction
+    if (
+      path[0] === "sessions" &&
+      path[1] &&
+      path[2] === "research" &&
+      (path[3] === "process" || path[3] === "extract") &&
+      request.method === "POST"
+    ) {
+      const { supabase, user, response } = await getAuth();
+      if (response || !user) return response;
+      const sessionId = path[1];
+
+      try {
+        const extraction = await executeSessionExtraction(supabase, sessionId, user.id);
+        return json(extraction);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Extraction execution failed";
+        return json({ code: "EXTRACTION_FAILED", error: message }, 500);
+      }
     }
 
     if (path[0] === "sessions" && path[1] && request.method === "DELETE") {
@@ -500,17 +604,34 @@ async function handleRoute(request: Request, { params }: RouteContext) {
     }
 
     if (route === "/research/process" && request.method === "POST") {
-      const { response } = await getAuth();
-      if (response) return response;
+      const { supabase, user, response } = await getAuth();
+      if (response || !user) return response;
       const body = await request.json().catch(() => ({}));
-      const images = Array.isArray(body.images) ? body.images : [];
-      const validation = validateResearchInput(typeof body.text === "string" ? body.text : "", images);
+
+      // If a sessionId was provided, execute full extraction on that session
+      if (typeof body?.sessionId === "string" && body.sessionId) {
+        try {
+          const extraction = await executeSessionExtraction(supabase, body.sessionId, user.id);
+          return json(extraction);
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "Extraction failed";
+          return json({ code: "EXTRACTION_FAILED", error: message }, 500);
+        }
+      }
+
+      const images = Array.isArray(body?.images) ? body.images : [];
+      const validation = validateResearchInput(typeof body?.text === "string" ? body.text : "", images);
       if (!validation.ok) return json({ code: validation.code, error: validation.message }, 400);
-      const result = await getProviderDisabledAdapter().process({
-        text: body.text,
-        images: images.map((image: Record<string, unknown>) => ({ name: String(image.name ?? "material"), type: String(image.type ?? ""), size: Number(image.size ?? 0) })),
+
+      const result = await getResearchAdapter().process({
+        text: typeof body?.text === "string" ? body.text : "",
+        images: images.map((image: Record<string, unknown>) => ({
+          name: String(image.name ?? "material"),
+          type: String(image.type ?? ""),
+          size: Number(image.size ?? 0),
+        })),
       });
-      return json(result, 503);
+      return json(result, 200);
     }
 
     return json({ code: "NOT_FOUND", error: `Route ${route} not found.` }, 404);

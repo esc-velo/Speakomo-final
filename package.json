@@ -8,7 +8,8 @@
         "dev:webpack": "next dev --hostname 0.0.0.0 --port 3000",
         "build": "next build",
         "start": "next start",
-        "lint": "tsc --noEmit"
+        "lint": "tsc --noEmit",
+        "test": "node --experimental-strip-types --test tests/integration/research-pipeline.test.mjs"
     },
     "dependencies": {
         "@hookform/resolvers": "5.1.1",
@@ -67,6 +68,7 @@
         "swr": "2.3.8",
         "tailwind-merge": "3.3.1",
         "tailwindcss-animate": "1.0.7",
+        "tesseract.js": "^7.0.0",
         "uuid": "11.1.1",
         "vaul": "1.1.2",
         "zod": "3.25.67",
